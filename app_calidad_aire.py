@@ -1,4 +1,5 @@
 import os
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -11,20 +12,16 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 class AirQualityApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Predicción de Ozono - Regresión Lineal, k-NN y PCA")
+        self.root.title("Predicción de Ozono - Análisis Manual")
         self.root.geometry("1250x780")
         self.root.minsize(1050, 680)
 
+        self.feature_names = ["NO2", "CO", "PM2.5", "PM10", "SO2"]
         self.df = None
-        self.X_train = None
-        self.X_test = None
-        self.y_train = None
-        self.y_test = None
         self.X_train_scaled = None
         self.X_test_scaled = None
-        self.mean_train = None
-        self.std_train = None
-        self.theta = None
+        self.y_train = None
+        self.y_test = None
         self.lineal_metrics = None
         self.knn_metrics = None
         self.pca_metrics = None
@@ -32,10 +29,12 @@ class AirQualityApp:
         self.pred_lineal = None
         self.pred_knn = None
         self.pred_pca = None
-        self.components = None
+        self.knn_results = None
+        self.explained = None
         self.varianza_acumulada = None
         self.n_components = None
-        self.feature_names = ["NO2", "CO", "PM2.5", "PM10", "SO2"]
+        self.canvas = None
+        self.pca_canvas = None
 
         self.create_interface()
         self.load_default_file()
@@ -52,11 +51,7 @@ class AirQualityApp:
         ttk.Button(top, text="Cargar CSV", command=self.load_csv).pack(side="right", padx=5)
         ttk.Button(top, text="Ejecutar análisis", command=self.run_analysis).pack(side="right", padx=5)
 
-        self.status = ttk.Label(
-            top,
-            text="Cargue el CSV o use el archivo por defecto.",
-            style="Info.TLabel"
-        )
+        self.status = ttk.Label(top, text="Cargue un CSV para comenzar.", style="Info.TLabel")
         self.status.pack(side="right", padx=15)
 
         self.notebook = ttk.Notebook(self.root)
@@ -78,7 +73,7 @@ class AirQualityApp:
         self.create_pca_tab()
 
     def create_data_tab(self):
-        self.data_summary = tk.Text(self.tab_data, height=12, font=("Consolas", 10))
+        self.data_summary = tk.Text(self.tab_data, height=11, font=("Consolas", 10))
         self.data_summary.pack(fill="x", pady=(0, 10))
 
         frame = ttk.Frame(self.tab_data)
@@ -88,7 +83,7 @@ class AirQualityApp:
         self.data_table = ttk.Treeview(frame, columns=columns, show="headings", height=20)
         for col in columns:
             self.data_table.heading(col, text=col)
-            self.data_table.column(col, width=120, anchor="center")
+            self.data_table.column(col, width=115, anchor="center")
         self.data_table.column("Date", width=130)
 
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.data_table.yview)
@@ -97,16 +92,16 @@ class AirQualityApp:
         scrollbar.pack(side="right", fill="y")
 
     def create_metrics_tab(self):
-        top = ttk.Frame(self.tab_metrics)
-        top.pack(fill="x", pady=(0, 10))
+        controls = ttk.Frame(self.tab_metrics)
+        controls.pack(fill="x", pady=(0, 10))
 
-        ttk.Label(top, text="k máximo a evaluar:").pack(side="left")
+        ttk.Label(controls, text="k máximo a evaluar:").pack(side="left")
         self.k_limit = tk.IntVar(value=30)
-        ttk.Spinbox(top, from_=2, to=60, textvariable=self.k_limit, width=8).pack(side="left", padx=5)
-        ttk.Button(top, text="Actualizar análisis", command=self.run_analysis).pack(side="left", padx=5)
+        ttk.Spinbox(controls, from_=2, to=60, textvariable=self.k_limit, width=8).pack(side="left", padx=5)
+        ttk.Button(controls, text="Actualizar análisis", command=self.run_analysis).pack(side="left", padx=5)
 
         columns = ("Modelo", "Configuración", "R²", "RMSE (ppm)", "MAE (ppm)")
-        self.metrics_table = ttk.Treeview(self.tab_metrics, columns=columns, show="headings", height=8)
+        self.metrics_table = ttk.Treeview(self.tab_metrics, columns=columns, show="headings", height=7)
         for col in columns:
             self.metrics_table.heading(col, text=col)
             self.metrics_table.column(col, width=175, anchor="center")
@@ -123,19 +118,17 @@ class AirQualityApp:
         ttk.Button(controls, text="Correlación", command=self.plot_correlation).pack(side="left", padx=4)
         ttk.Button(controls, text="Real vs. predicho", command=self.plot_real_vs_pred).pack(side="left", padx=4)
         ttk.Button(controls, text="Residuos", command=self.plot_residuals).pack(side="left", padx=4)
-        ttk.Button(controls, text="Comparación de k", command=self.plot_k_results).pack(side="left", padx=4)
+        ttk.Button(controls, text="Selección de k", command=self.plot_k_results).pack(side="left", padx=4)
 
         self.graph_frame = ttk.Frame(self.tab_graphs)
         self.graph_frame.pack(fill="both", expand=True, pady=10)
-        self.canvas = None
 
     def create_pca_tab(self):
-        self.pca_summary = tk.Text(self.tab_pca, height=11, wrap="word", font=("Arial", 11))
+        self.pca_summary = tk.Text(self.tab_pca, height=10, wrap="word", font=("Arial", 11))
         self.pca_summary.pack(fill="x", pady=(0, 10))
 
         self.pca_graph_frame = ttk.Frame(self.tab_pca)
         self.pca_graph_frame.pack(fill="both", expand=True)
-        self.pca_canvas = None
 
     def load_default_file(self):
         default = "epa_air_quality_10730023_2025_clean.csv"
@@ -154,22 +147,19 @@ class AirQualityApp:
         try:
             df = pd.read_csv(path)
             required = ["Date"] + self.feature_names + ["O3"]
-            missing = [col for col in required if col not in df.columns]
+            missing = [column for column in required if column not in df.columns]
             if missing:
                 raise ValueError("Faltan columnas: " + ", ".join(missing))
 
             df["Date"] = pd.to_datetime(df["Date"])
             self.df = df
-            self.status.config(text=f"Archivo cargado: {os.path.basename(path)}")
             self.show_data()
             self.run_analysis()
+            self.status.config(text=f"Archivo cargado: {os.path.basename(path)}")
         except Exception as error:
             messagebox.showerror("Error al cargar", str(error))
 
     def show_data(self):
-        if self.df is None:
-            return
-
         clean = self.df.dropna().copy()
         summary = (
             f"Filas originales: {len(self.df)}\n"
@@ -185,14 +175,33 @@ class AirQualityApp:
 
         for _, row in self.df.head(100).iterrows():
             values = [row["Date"].strftime("%Y-%m-%d")]
-            for col in self.feature_names + ["O3"]:
-                value = row[col]
+            for column in self.feature_names + ["O3"]:
+                value = row[column]
                 values.append("" if pd.isna(value) else f"{value:.4f}")
             self.data_table.insert("", tk.END, values=values)
 
+    @staticmethod
+    def metrics(y_real, y_pred):
+        residuals = y_real - y_pred
+        mse = np.mean(residuals ** 2)
+        rmse = np.sqrt(mse)
+        mae = np.mean(np.abs(residuals))
+        denominator = np.sum((y_real - np.mean(y_real)) ** 2)
+        r2 = 1 - np.sum(residuals ** 2) / denominator
+        return r2, rmse, mae
+
+    @staticmethod
+    def knn_predict(X_train, y_train, X_test, k):
+        predictions = []
+        for point in X_test:
+            distances = np.sqrt(np.sum((X_train - point) ** 2, axis=1))
+            neighbor_indices = np.argsort(distances)[:k]
+            predictions.append(np.mean(y_train[neighbor_indices]))
+        return np.array(predictions)
+
     def split_and_scale(self, X, y):
-        np.random.seed(42)
-        indices = np.random.permutation(len(X))
+        rng = np.random.default_rng(42)
+        indices = rng.permutation(len(X))
         n_test = int(len(X) * 0.20)
         test_indices = indices[:n_test]
         train_indices = indices[n_test:]
@@ -202,21 +211,12 @@ class AirQualityApp:
         self.y_train = y[train_indices]
         self.y_test = y[test_indices]
 
-        self.mean_train = np.mean(self.X_train, axis=0)
-        self.std_train = np.std(self.X_train, axis=0)
-        self.std_train[self.std_train == 0] = 1
+        mean_train = np.mean(self.X_train, axis=0)
+        std_train = np.std(self.X_train, axis=0)
+        std_train[std_train == 0] = 1
 
-        self.X_train_scaled = (self.X_train - self.mean_train) / self.std_train
-        self.X_test_scaled = (self.X_test - self.mean_train) / self.std_train
-
-    @staticmethod
-    def metrics(y_real, y_pred):
-        residuals = y_real - y_pred
-        mse = np.mean(residuals ** 2)
-        rmse = np.sqrt(mse)
-        mae = np.mean(np.abs(residuals))
-        r2 = 1 - np.sum(residuals ** 2) / np.sum((y_real - np.mean(y_real)) ** 2)
-        return r2, rmse, mae
+        self.X_train_scaled = (self.X_train - mean_train) / std_train
+        self.X_test_scaled = (self.X_test - mean_train) / std_train
 
     def linear_regression_manual(self):
         train_bias = np.column_stack((np.ones(len(self.X_train_scaled)), self.X_train_scaled))
@@ -225,15 +225,6 @@ class AirQualityApp:
         self.pred_lineal = test_bias @ self.theta
         return self.metrics(self.y_test, self.pred_lineal)
 
-    @staticmethod
-    def knn_predict(X_train, y_train, X_test, k):
-        predictions = []
-        for point in X_test:
-            distances = np.sqrt(np.sum((X_train - point) ** 2, axis=1))
-            neighbors = np.argsort(distances)[:k]
-            predictions.append(np.mean(y_train[neighbors]))
-        return np.array(predictions)
-
     def pca_manual(self):
         covariance = np.cov(self.X_train_scaled, rowvar=False)
         eigenvalues, eigenvectors = np.linalg.eigh(covariance)
@@ -241,16 +232,15 @@ class AirQualityApp:
         eigenvalues = eigenvalues[order]
         eigenvectors = eigenvectors[:, order]
 
-        explained = eigenvalues / np.sum(eigenvalues)
-        cumulative = np.cumsum(explained)
-        self.n_components = np.argmax(cumulative >= 0.95) + 1
-        self.components = eigenvectors[:, :self.n_components]
-        self.varianza_acumulada = cumulative
+        self.explained = eigenvalues / np.sum(eigenvalues)
+        self.varianza_acumulada = np.cumsum(self.explained)
+        self.n_components = np.argmax(self.varianza_acumulada >= 0.95) + 1
 
-        train_pca = self.X_train_scaled @ self.components
-        test_pca = self.X_test_scaled @ self.components
+        components = eigenvectors[:, :self.n_components]
+        train_pca = self.X_train_scaled @ components
+        test_pca = self.X_test_scaled @ components
         self.pred_pca = self.knn_predict(train_pca, self.y_train, test_pca, self.best_k)
-        return self.metrics(self.y_test, self.pred_pca), explained
+        return self.metrics(self.y_test, self.pred_pca)
 
     def run_analysis(self):
         if self.df is None:
@@ -263,26 +253,26 @@ class AirQualityApp:
 
             self.lineal_metrics = self.linear_regression_manual()
 
-            all_results = []
             limit = min(self.k_limit.get(), len(self.X_train))
+            results = []
             for k in range(1, limit + 1):
-                pred = self.knn_predict(self.X_train_scaled, self.y_train, self.X_test_scaled, k)
-                r2, rmse, mae = self.metrics(self.y_test, pred)
-                all_results.append((k, r2, rmse, mae))
+                prediction = self.knn_predict(self.X_train_scaled, self.y_train, self.X_test_scaled, k)
+                r2, rmse, mae = self.metrics(self.y_test, prediction)
+                results.append((k, r2, rmse, mae))
 
-            self.knn_results = pd.DataFrame(all_results, columns=["k", "R2", "RMSE", "MAE"])
+            self.knn_results = pd.DataFrame(results, columns=["k", "R2", "RMSE", "MAE"])
             best = self.knn_results.sort_values("RMSE").iloc[0]
             self.best_k = int(best["k"])
             self.pred_knn = self.knn_predict(
                 self.X_train_scaled, self.y_train, self.X_test_scaled, self.best_k
             )
             self.knn_metrics = self.metrics(self.y_test, self.pred_knn)
+            self.pca_metrics = self.pca_manual()
 
-            self.pca_metrics, self.explained = self.pca_manual()
             self.update_metrics()
             self.update_pca_tab()
             self.status.config(
-                text=f"Análisis listo: {len(clean)} filas, mejor k={self.best_k}"
+                text=f"Análisis listo: {len(clean)} registros completos, mejor k={self.best_k}"
             )
             self.plot_real_vs_pred()
         except Exception as error:
@@ -294,7 +284,7 @@ class AirQualityApp:
 
         rows = [
             ("Regresión lineal", "Ecuación normal", *self.lineal_metrics),
-            ("k-NN", f"k={self.best_k}", *self.knn_metrics),
+            ("k-NN manual", f"k={self.best_k}", *self.knn_metrics),
             ("k-NN con PCA", f"{self.n_components} componentes", *self.pca_metrics),
         ]
         for model, config, r2, rmse, mae in rows:
@@ -306,25 +296,20 @@ class AirQualityApp:
         r2_l, rmse_l, mae_l = self.lineal_metrics
         r2_k, rmse_k, mae_k = self.knn_metrics
         r2_p, rmse_p, mae_p = self.pca_metrics
-
-        text = (
-            "Interpretación de las métricas\n\n"
-            "R² indica qué proporción de la variación de O3 explica el modelo. "
-            "Un valor mayor es mejor; 1 representa predicción perfecta y 0 equivale a predecir siempre el promedio.\n\n"
-            "RMSE mide el tamaño típico del error y penaliza con mayor fuerza los errores grandes. "
-            "MAE representa el error absoluto promedio. Ambos se expresan en ppm y valores menores son mejores.\n\n"
+        explanation = (
+            "R² indica qué proporción de la variabilidad de O3 explica el modelo: un valor mayor es mejor.\n\n"
+            "RMSE es el error típico y castiga más los errores grandes. MAE es el error absoluto promedio. "
+            "Ambos están expresados en ppm y valores menores son mejores.\n\n"
             f"Regresión lineal: R²={r2_l:.4f}, RMSE={rmse_l:.5f}, MAE={mae_l:.5f}.\n"
             f"k-NN con k={self.best_k}: R²={r2_k:.4f}, RMSE={rmse_k:.5f}, MAE={mae_k:.5f}.\n"
             f"k-NN con PCA: R²={r2_p:.4f}, RMSE={rmse_p:.5f}, MAE={mae_p:.5f}.\n\n"
-            "La regresión lineal se calculó con la ecuación normal. k-NN usa distancia euclidiana "
-            "y el promedio de los vecinos más cercanos. PCA se calculó con covarianza, autovalores y autovectores."
+            "La regresión lineal se calculó con la ecuación normal. k-NN calcula distancias euclidianas y promedia "
+            "el O3 de los vecinos más cercanos. PCA se calculó con matriz de covarianza, autovalores y autovectores."
         )
         self.explanation.delete("1.0", tk.END)
-        self.explanation.insert(tk.END, text)
+        self.explanation.insert(tk.END, explanation)
 
     def update_pca_tab(self):
-        if self.n_components is None:
-            return
         text = (
             f"PCA redujo {len(self.feature_names)} predictores a {self.n_components} componentes principales.\n\n"
             "Varianza explicada por componente:\n" +
@@ -336,18 +321,23 @@ class AirQualityApp:
         self.pca_summary.delete("1.0", tk.END)
         self.pca_summary.insert(tk.END, text)
 
-        self.clear_pca_graph()
+        if self.pca_canvas is not None:
+            self.pca_canvas.get_tk_widget().destroy()
+
         figure, ax = plt.subplots(figsize=(8, 4.5))
         positions = np.arange(1, len(self.explained) + 1)
-        ax.bar(positions, self.explained * 100, label="Varianza individual")
-        ax.plot(positions, self.varianza_acumulada * 100, marker="o", color="red", label="Varianza acumulada")
-        ax.axhline(95, color="green", linestyle="--", label="Meta 95%")
+        ax.bar(positions, self.explained * 100, color="#4C78A8", label="Varianza individual")
+        ax.plot(positions, self.varianza_acumulada * 100, marker="o", color="#E45756", label="Varianza acumulada")
+        ax.axhline(95, color="#54A24B", linestyle="--", label="Meta 95%")
         ax.set_xlabel("Componente principal")
         ax.set_ylabel("Varianza explicada (%)")
         ax.set_title("Varianza explicada por PCA")
         ax.set_xticks(positions)
+        ax.set_ylim(0, 105)
         ax.legend()
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.25)
+        figure.tight_layout()
+
         self.pca_canvas = FigureCanvasTkAgg(figure, master=self.pca_graph_frame)
         self.pca_canvas.draw()
         self.pca_canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -357,13 +347,9 @@ class AirQualityApp:
             self.canvas.get_tk_widget().destroy()
             self.canvas = None
 
-    def clear_pca_graph(self):
-        if self.pca_canvas is not None:
-            self.pca_canvas.get_tk_widget().destroy()
-            self.pca_canvas = None
-
     def show_figure(self, figure):
         self.clear_graph()
+        figure.tight_layout()
         self.canvas = FigureCanvasTkAgg(figure, master=self.graph_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -372,11 +358,11 @@ class AirQualityApp:
         if self.df is None:
             return
         figure, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(self.df["Date"], self.df["O3"], color="green")
+        ax.plot(self.df["Date"], self.df["O3"], color="forestgreen", linewidth=1.5)
         ax.set_title("Concentración diaria de ozono (O3) durante 2025")
         ax.set_xlabel("Fecha")
         ax.set_ylabel("O3 (ppm)")
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.25)
         self.show_figure(figure)
 
     def plot_correlation(self):
@@ -384,18 +370,20 @@ class AirQualityApp:
             return
         clean = self.df.dropna()
         correlation = clean[self.feature_names + ["O3"]].corr()
+        labels = self.feature_names + ["O3"]
+
         figure, ax = plt.subplots(figsize=(8, 6))
         image = ax.imshow(correlation, cmap="coolwarm", vmin=-1, vmax=1)
-        labels = self.feature_names + ["O3"]
         ax.set_xticks(range(len(labels)))
         ax.set_yticks(range(len(labels)))
         ax.set_xticklabels(labels)
         ax.set_yticklabels(labels)
         for i in range(len(labels)):
             for j in range(len(labels)):
-                color = "white" if abs(correlation.iloc[i, j]) > 0.55 else "black"
-                ax.text(j, i, f"{correlation.iloc[i, j]:.2f}", ha="center", va="center", color=color)
-        figure.colorbar(image, ax=ax)
+                value = correlation.iloc[i, j]
+                color = "white" if abs(value) > 0.55 else "black"
+                ax.text(j, i, f"{value:.2f}", ha="center", va="center", color=color)
+        figure.colorbar(image, ax=ax, label="Correlación")
         ax.set_title("Matriz de correlación entre contaminantes")
         self.show_figure(figure)
 
@@ -403,15 +391,18 @@ class AirQualityApp:
         if self.pred_knn is None:
             return
         figure, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(self.y_test, self.pred_knn, alpha=0.75, edgecolor="black")
+        ax.scatter(self.y_test, self.pred_knn, color="#4C78A8", alpha=0.8, edgecolor="black")
         lower = min(self.y_test.min(), self.pred_knn.min())
         upper = max(self.y_test.max(), self.pred_knn.max())
-        ax.plot([lower, upper], [lower, upper], "r--", label="Predicción perfecta")
+        margin = (upper - lower) * 0.05
+        ax.plot([lower - margin, upper + margin], [lower - margin, upper + margin], "r--", label="Predicción perfecta")
+        ax.set_xlim(lower - margin, upper + margin)
+        ax.set_ylim(lower - margin, upper + margin)
         ax.set_xlabel("O3 real (ppm)")
         ax.set_ylabel("O3 predicho (ppm)")
         ax.set_title(f"O3 real vs. O3 predicho — k-NN manual (k={self.best_k})")
         ax.legend()
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.25)
         self.show_figure(figure)
 
     def plot_residuals(self):
@@ -419,30 +410,59 @@ class AirQualityApp:
             return
         residuals = self.y_test - self.pred_knn
         figure, ax = plt.subplots(figsize=(8, 5))
-        ax.scatter(self.pred_knn, residuals, color="darkorange", alpha=0.75, edgecolor="black")
-        ax.axhline(0, color="red", linestyle="--")
+        ax.scatter(self.pred_knn, residuals, color="#F28E2B", alpha=0.8, edgecolor="black")
+        ax.axhline(0, color="red", linestyle="--", linewidth=1.5)
+        max_abs = max(abs(residuals.min()), abs(residuals.max())) * 1.1
+        ax.set_ylim(-max_abs, max_abs)
         ax.set_xlabel("O3 predicho (ppm)")
         ax.set_ylabel("Residuo: O3 real - O3 predicho")
         ax.set_title(f"Residuos — k-NN manual (k={self.best_k})")
-        ax.grid(alpha=0.3)
+        ax.grid(alpha=0.25)
         self.show_figure(figure)
 
     def plot_k_results(self):
-        if not hasattr(self, "knn_results"):
+        if self.knn_results is None:
             return
-        figure, ax1 = plt.subplots(figsize=(9, 5))
-        ax1.plot(self.knn_results["k"], self.knn_results["RMSE"], marker="o", label="RMSE")
-        ax1.plot(self.knn_results["k"], self.knn_results["MAE"], marker="s", label="MAE")
-        ax1.set_xlabel("Número de vecinos k")
-        ax1.set_ylabel("Error (ppm)")
-        ax1.axvline(self.best_k, color="red", linestyle="--", label=f"Mejor k={self.best_k}")
-        ax1.set_title("Errores de k-NN según el valor de k")
-        ax1.grid(alpha=0.3)
-        ax1.legend()
+        figure, ax_error = plt.subplots(figsize=(9, 5.5))
+        ax_r2 = ax_error.twinx()
+
+        line_rmse = ax_error.plot(
+            self.knn_results["k"], self.knn_results["RMSE"],
+            marker="o", color="#4C78A8", label="RMSE"
+        )
+        line_mae = ax_error.plot(
+            self.knn_results["k"], self.knn_results["MAE"],
+            marker="s", color="#F28E2B", label="MAE"
+        )
+        line_r2 = ax_r2.plot(
+            self.knn_results["k"], self.knn_results["R2"],
+            marker="^", color="#59A14F", label="R²"
+        )
+
+        best_row = self.knn_results[self.knn_results["k"] == self.best_k].iloc[0]
+        ax_error.axvline(self.best_k, color="red", linestyle="--", label=f"Mejor k={self.best_k}")
+        ax_error.annotate(
+            f"k={self.best_k}\nRMSE={best_row['RMSE']:.5f}\nR²={best_row['R2']:.3f}",
+            xy=(self.best_k, best_row["RMSE"]),
+            xytext=(10, 15),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
+            arrowprops=dict(arrowstyle="->")
+        )
+
+        ax_error.set_xlabel("Número de vecinos k")
+        ax_error.set_ylabel("Error (ppm)")
+        ax_r2.set_ylabel("R²")
+        ax_error.set_title("Selección del mejor k para k-NN")
+        ax_error.grid(alpha=0.25)
+
+        lines = line_rmse + line_mae + line_r2
+        labels = [line.get_label() for line in lines]
+        ax_error.legend(lines, labels, loc="upper center")
         self.show_figure(figure)
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = AirQualityApp(root)
+    AirQualityApp(root)
     root.mainloop()
