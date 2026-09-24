@@ -423,44 +423,134 @@ class AirQualityApp:
     def plot_k_results(self):
         if self.knn_results is None:
             return
-        figure, ax_error = plt.subplots(figsize=(9, 5.5))
-        ax_r2 = ax_error.twinx()
 
-        line_rmse = ax_error.plot(
-            self.knn_results["k"], self.knn_results["RMSE"],
-            marker="o", color="#4C78A8", label="RMSE"
-        )
-        line_mae = ax_error.plot(
-            self.knn_results["k"], self.knn_results["MAE"],
-            marker="s", color="#F28E2B", label="MAE"
-        )
-        line_r2 = ax_r2.plot(
-            self.knn_results["k"], self.knn_results["R2"],
-            marker="^", color="#59A14F", label="R²"
+        mejor_rmse = self.knn_results["RMSE"].min()
+        mejor_fila = self.knn_results.loc[
+            self.knn_results["RMSE"].idxmin()
+        ]
+
+        mejor_k = int(mejor_fila["k"])
+
+        figure, axes = plt.subplots(
+            2,
+            1,
+            figsize=(10, 8),
+            sharex=True
         )
 
-        best_row = self.knn_results[self.knn_results["k"] == self.best_k].iloc[0]
-        ax_error.axvline(self.best_k, color="red", linestyle="--", label=f"Mejor k={self.best_k}")
-        ax_error.annotate(
-            f"k={self.best_k}\nRMSE={best_row['RMSE']:.5f}\nR²={best_row['R2']:.3f}",
-            xy=(self.best_k, best_row["RMSE"]),
-            xytext=(10, 15),
+        # Gráfica de errores
+        axes[0].plot(
+            self.knn_results["k"],
+            self.knn_results["RMSE"],
+            marker="o",
+            color="#4C78A8",
+            label="RMSE"
+        )
+
+        axes[0].plot(
+            self.knn_results["k"],
+            self.knn_results["MAE"],
+            marker="s",
+            color="#F28E2B",
+            label="MAE"
+        )
+
+        axes[0].axvline(
+            mejor_k,
+            color="red",
+            linestyle="--",
+            label=f"Mejor k={mejor_k}"
+        )
+
+        axes[0].scatter(
+            mejor_k,
+            mejor_fila["RMSE"],
+            color="red",
+            s=100,
+            zorder=5
+        )
+
+        axes[0].annotate(
+            f"k={mejor_k}\n"
+            f"RMSE={mejor_fila['RMSE']:.5f}\n"
+            f"MAE={mejor_fila['MAE']:.5f}",
+            xy=(mejor_k, mejor_fila["RMSE"]),
+            xytext=(12, 12),
             textcoords="offset points",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
-            arrowprops=dict(arrowstyle="->")
+            bbox=dict(
+                boxstyle="round",
+                facecolor="white",
+                edgecolor="black",
+                alpha=0.9
+            ),
+            arrowprops=dict(
+                arrowstyle="->",
+                color="black"
+            )
         )
 
-        ax_error.set_xlabel("Número de vecinos k")
-        ax_error.set_ylabel("Error (ppm)")
-        ax_r2.set_ylabel("R²")
-        ax_error.set_title("Selección del mejor k para k-NN")
-        ax_error.grid(alpha=0.25)
+        axes[0].set_ylabel("Error (ppm)")
+        axes[0].set_title("Errores de k-NN según el número de vecinos")
+        axes[0].grid(alpha=0.25)
+        axes[0].legend()
 
-        lines = line_rmse + line_mae + line_r2
-        labels = [line.get_label() for line in lines]
-        ax_error.legend(lines, labels, loc="upper center")
+        # Gráfica de R²
+        axes[1].plot(
+            self.knn_results["k"],
+            self.knn_results["R2"],
+            marker="^",
+            color="#59A14F",
+            label="R²"
+        )
+
+        axes[1].axvline(
+            mejor_k,
+            color="red",
+            linestyle="--",
+            label=f"Mejor k={mejor_k}"
+        )
+
+        axes[1].scatter(
+            mejor_k,
+            mejor_fila["R2"],
+            color="red",
+            s=100,
+            zorder=5
+        )
+
+        axes[1].annotate(
+            f"R²={mejor_fila['R2']:.4f}",
+            xy=(mejor_k, mejor_fila["R2"]),
+            xytext=(12, -25),
+            textcoords="offset points",
+            bbox=dict(
+                boxstyle="round",
+                facecolor="white",
+                edgecolor="black",
+                alpha=0.9
+            ),
+            arrowprops=dict(
+                arrowstyle="->",
+                color="black"
+            )
+        )
+
+        axes[1].set_xlabel("Número de vecinos k")
+        axes[1].set_ylabel("R²")
+        axes[1].set_title("Coeficiente de determinación según k")
+        axes[1].grid(alpha=0.25)
+        axes[1].legend()
+
+        axes[1].set_xticks(self.knn_results["k"])
+
+        figure.suptitle(
+            "Selección del hiperparámetro k para k-NN",
+            fontsize=14,
+            fontweight="bold"
+        )
+
+        figure.tight_layout()
         self.show_figure(figure)
-
 
 if __name__ == "__main__":
     root = tk.Tk()
